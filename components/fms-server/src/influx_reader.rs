@@ -23,6 +23,7 @@ use influx_client::connection::{InfluxConnection, InfluxConnectionConfig};
 use influxrs::InfluxError;
 use log::error;
 
+use crate::models::diagnostics::{DiagnosticCodeObject, DiagnosticSummaryObject};
 use crate::models::position::{GnssPositionObject, VehiclePositionObject};
 use crate::models::status::{DriverWorkingStateProperty, SnapshotDataObject, VehicleStatusObject};
 use crate::models::vehicle::VehicleObject;
@@ -400,5 +401,181 @@ impl InfluxReader {
                     })
                     .collect()
             })
+    }
+
+    /// Returns all VINs that have diagnostic summary data.
+    pub async fn get_diagnostic_vins(&self) -> Result<Vec<String>, InfluxError> {
+        let query = influxrs::Query::new(format!(
+            r#"
+                import "influxdata/influxdb/schema"
+                schema.tagValues(bucket: "{}", tag: "{}", predicate: (r) => r._measurement == "{}")
+            "#,
+            self.influx_con.bucket,
+            influx_client::TAG_VIN,
+            influx_client::MEASUREMENT_DIAGNOSTIC_SUMMARY,
+        ));
+        self.influx_con.client.query(query).await.map(|rows| {
+            rows.into_iter()
+                .filter_map(|e| e.get("_value").map(|v| v.to_string()))
+                .collect()
+        })
+    }
+
+    /// Returns the latest diagnostic summary for a given VIN.
+    pub async fn get_diagnostic_summary(
+        &self,
+        vin: &str,
+    ) -> Result<Vec<DiagnosticSummaryObject>, InfluxError> {
+        let query = influxrs::Query::new(format!(r#"from(bucket: "{}")"#, self.influx_con.bucket))
+            .then("range(start: -30d)")
+            .then(format!(
+                r#"filter(fn: (r) => r._measurement == "{}")"#,
+                influx_client::MEASUREMENT_DIAGNOSTIC_SUMMARY
+            ))
+            .then(format!(
+                r#"filter(fn: (r) => r["{}"] == "{}")"#,
+                influx_client::TAG_VIN,
+                vin
+            ))
+            .then("last()")
+            .then(r#"pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")"#);
+
+        self.influx_con.client.query(query).await.map(|rows| {
+            rows.into_iter()
+                .filter_map(|e| {
+                    e.get(influx_client::TAG_VIN)
+                        .map(|v| DiagnosticSummaryObject {
+                            vin: v.to_string(),
+                            source: e.get(influx_client::TAG_SOURCE).cloned(),
+                            component_id: e.get(influx_client::TAG_COMPONENT_ID).cloned(),
+                            created_date_time: unpack_time(
+                                e.get(influx_client::FIELD_CREATED_DATE_TIME),
+                            ),
+                            active_count: unpack_value_i64(
+                                e.get(influx_client::FIELD_ACTIVE_COUNT),
+                            ),
+                            stored_count: unpack_value_i64(
+                                e.get(influx_client::FIELD_STORED_COUNT),
+                            ),
+                            pending_count: unpack_value_i64(
+                                e.get(influx_client::FIELD_PENDING_COUNT),
+                            ),
+                            critical_count: unpack_value_i64(
+                                e.get(influx_client::FIELD_CRITICAL_COUNT),
+                            ),
+                            has_active_faults: unpack_value_bool(
+                                e.get(influx_client::FIELD_HAS_ACTIVE_FAULTS),
+                            ),
+                            worst_severity: e.get(influx_client::FIELD_WORST_SEVERITY).cloned(),
+                        })
+                })
+                .collect()
+        })
+    }
+
+    /// Returns all DTC measurements for a given VIN, optionally filtered to active only.
+    pub async fn get_diagnostic_codes(
+        &self,
+        vin: &str,
+        active_only: bool,
+    ) -> Result<Vec<DiagnosticCodeObject>, InfluxError> {
+        let mut query =
+            influxrs::Query::new(format!(r#"from(bucket: "{}")"#, self.influx_con.bucket))
+                .then("range(start: -30d)")
+                .then(format!(
+                    r#"filter(fn: (r) => r._measurement == "{}")"#,
+                    influx_client::MEASUREMENT_DIAGNOSTIC_CODE
+                ))
+                .then(format!(
+                    r#"filter(fn: (r) => r["{}"] == "{}")"#,
+                    influx_client::TAG_VIN,
+                    vin
+                ));
+
+        if active_only {
+            query = query.then(format!(
+                r#"filter(fn: (r) => r["{}"] == "ACTIVE")"#,
+                influx_client::TAG_LIFECYCLE_STATE
+            ));
+        }
+
+        query =
+            query.then(r#"pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")"#);
+
+        self.influx_con.client.query(query).await.map(|rows| {
+            rows.into_iter()
+                .filter_map(|e| {
+                    e.get(influx_client::TAG_VIN).map(|v| DiagnosticCodeObject {
+                        vin: v.to_string(),
+                        code: e.get(influx_client::TAG_CODE).cloned(),
+                        source: e.get(influx_client::TAG_SOURCE).cloned(),
+                        component_id: e.get(influx_client::TAG_COMPONENT_ID).cloned(),
+                        ecu: e.get(influx_client::TAG_ECU).cloned(),
+                        severity: e.get(influx_client::TAG_SEVERITY).cloned(),
+                        lifecycle_state: e.get(influx_client::TAG_LIFECYCLE_STATE).cloned(),
+                        protocol: e.get(influx_client::TAG_PROTOCOL).cloned(),
+                        raw_uds_dtc: e.get(influx_client::FIELD_RAW_UDS_DTC).cloned(),
+                        status_mask: e.get(influx_client::FIELD_STATUS_MASK).cloned(),
+                        description: e.get(influx_client::FIELD_DESCRIPTION).cloned(),
+                        created_date_time: unpack_time(
+                            e.get(influx_client::FIELD_CREATED_DATE_TIME),
+                        ),
+                        first_seen: unpack_time(e.get(influx_client::FIELD_FIRST_SEEN)),
+                        last_seen: unpack_time(e.get(influx_client::FIELD_LAST_SEEN)),
+                    })
+                })
+                .collect()
+        })
+    }
+
+    /// Returns recent diagnostic summary points (timeline) for a given VIN.
+    pub async fn get_diagnostic_timeline(
+        &self,
+        vin: &str,
+    ) -> Result<Vec<DiagnosticSummaryObject>, InfluxError> {
+        let query = influxrs::Query::new(format!(r#"from(bucket: "{}")"#, self.influx_con.bucket))
+            .then("range(start: -24h)")
+            .then(format!(
+                r#"filter(fn: (r) => r._measurement == "{}")"#,
+                influx_client::MEASUREMENT_DIAGNOSTIC_SUMMARY
+            ))
+            .then(format!(
+                r#"filter(fn: (r) => r["{}"] == "{}")"#,
+                influx_client::TAG_VIN,
+                vin
+            ))
+            .then(r#"pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")"#);
+
+        self.influx_con.client.query(query).await.map(|rows| {
+            rows.into_iter()
+                .filter_map(|e| {
+                    e.get(influx_client::TAG_VIN)
+                        .map(|v| DiagnosticSummaryObject {
+                            vin: v.to_string(),
+                            source: e.get(influx_client::TAG_SOURCE).cloned(),
+                            component_id: e.get(influx_client::TAG_COMPONENT_ID).cloned(),
+                            created_date_time: unpack_time(
+                                e.get(influx_client::FIELD_CREATED_DATE_TIME),
+                            ),
+                            active_count: unpack_value_i64(
+                                e.get(influx_client::FIELD_ACTIVE_COUNT),
+                            ),
+                            stored_count: unpack_value_i64(
+                                e.get(influx_client::FIELD_STORED_COUNT),
+                            ),
+                            pending_count: unpack_value_i64(
+                                e.get(influx_client::FIELD_PENDING_COUNT),
+                            ),
+                            critical_count: unpack_value_i64(
+                                e.get(influx_client::FIELD_CRITICAL_COUNT),
+                            ),
+                            has_active_faults: unpack_value_bool(
+                                e.get(influx_client::FIELD_HAS_ACTIVE_FAULTS),
+                            ),
+                            worst_severity: e.get(influx_client::FIELD_WORST_SEVERITY).cloned(),
+                        })
+                })
+                .collect()
+        })
     }
 }

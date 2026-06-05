@@ -37,6 +37,9 @@ mod influx_reader;
 mod models;
 mod query_parser;
 
+use models::diagnostics::{
+    DiagnosticCodeListResponse, DiagnosticSummaryListResponse, DiagnosticVehicleListResponse,
+};
 use models::position::{
     VehiclePositionResponseObject, VehiclePositionResponseObjectVehiclePositionResponse,
 };
@@ -59,6 +62,20 @@ pub fn app(influx_connection_params: &InfluxConnectionConfig) -> Router {
         .route("/rfms/vehiclepositions", get(get_vehicleposition))
         .route("/rfms/vehicles", get(get_vehicles))
         .route("/rfms/vehiclestatuses", get(get_vehiclesstatuses))
+        .route("/diagnostics/vehicles", get(get_diagnostic_vehicles))
+        .route(
+            "/diagnostics/vehicles/{vin}/summary",
+            get(get_diagnostic_summary),
+        )
+        .route("/diagnostics/vehicles/{vin}/dtcs", get(get_diagnostic_dtcs))
+        .route(
+            "/diagnostics/vehicles/{vin}/dtcs/active",
+            get(get_diagnostic_dtcs_active),
+        )
+        .route(
+            "/diagnostics/vehicles/{vin}/timeline",
+            get(get_diagnostic_timeline),
+        )
         .with_state(influx_reader)
 }
 
@@ -143,6 +160,79 @@ async fn get_vehiclesstatuses(
         })
         .map_err(|e| {
             error!("error retrieving vehicle statuses: {e}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })
+}
+
+// ---------------------------------------------------------------------------
+// Diagnostics handlers
+// ---------------------------------------------------------------------------
+
+async fn get_diagnostic_vehicles(
+    State(influx_server): State<Arc<InfluxReader>>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    influx_server
+        .get_diagnostic_vins()
+        .await
+        .map(|vins| Json(json!(DiagnosticVehicleListResponse { vins })))
+        .map_err(|e| {
+            error!("error retrieving diagnostic vehicle list: {e}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })
+}
+
+async fn get_diagnostic_summary(
+    State(influx_server): State<Arc<InfluxReader>>,
+    axum::extract::Path(vin): axum::extract::Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    influx_server
+        .get_diagnostic_summary(&vin)
+        .await
+        .map(|summaries| Json(json!(DiagnosticSummaryListResponse { summaries })))
+        .map_err(|e| {
+            error!("error retrieving diagnostic summary for {vin}: {e}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })
+}
+
+async fn get_diagnostic_dtcs(
+    State(influx_server): State<Arc<InfluxReader>>,
+    axum::extract::Path(vin): axum::extract::Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    influx_server
+        .get_diagnostic_codes(&vin, false)
+        .await
+        .map(|dtcs| Json(json!(DiagnosticCodeListResponse { dtcs })))
+        .map_err(|e| {
+            error!("error retrieving DTCs for {vin}: {e}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })
+}
+
+async fn get_diagnostic_dtcs_active(
+    State(influx_server): State<Arc<InfluxReader>>,
+    axum::extract::Path(vin): axum::extract::Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    influx_server
+        .get_diagnostic_codes(&vin, true)
+        .await
+        .map(|dtcs| Json(json!(DiagnosticCodeListResponse { dtcs })))
+        .map_err(|e| {
+            error!("error retrieving active DTCs for {vin}: {e}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })
+}
+
+async fn get_diagnostic_timeline(
+    State(influx_server): State<Arc<InfluxReader>>,
+    axum::extract::Path(vin): axum::extract::Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    influx_server
+        .get_diagnostic_timeline(&vin)
+        .await
+        .map(|summaries| Json(json!(DiagnosticSummaryListResponse { summaries })))
+        .map_err(|e| {
+            error!("error retrieving diagnostic timeline for {vin}: {e}");
             StatusCode::INTERNAL_SERVER_ERROR
         })
 }

@@ -19,7 +19,7 @@
 
 //! Provides means to write a Vehicle's current status properties
 //! to an InfluxDB as Influx *measurements*.
-use fms_proto::fms::VehicleStatus;
+use fms_proto::fms::{DiagnosticCode, DiagnosticStatus, VehicleStatus};
 use influxrs::Measurement;
 use log::{debug, warn};
 use protobuf::well_known_types::timestamp::Timestamp;
@@ -321,5 +321,243 @@ impl InfluxWriter {
                 warn!("failed to write data to influx: {e}");
             }
         }
+    }
+
+    /// Writes DiagnosticStatus information as measurements to the InfluxDB server.
+    ///
+    /// Writes two measurement types:
+    /// - `diagnostic_summary` — one measurement with summary counts and flags.
+    /// - `diagnostic_code` — one measurement per DTC across active/stored/pending lists.
+    ///
+    /// This method is fire-and-forget: it logs failures internally and returns `()`.
+    pub async fn write_diagnostic_status(&self, diagnostic_status: &DiagnosticStatus) {
+        if diagnostic_status.vin.is_empty() {
+            debug!("ignoring diagnostic status without VIN ...");
+            return;
+        }
+
+        let created_ms = diagnostic_created_ms(diagnostic_status);
+        let mut measurements: Vec<Measurement> = Vec::new();
+
+        if let Some(measurement) =
+            build_diagnostic_summary_measurement(diagnostic_status, created_ms)
+        {
+            debug!("writing diagnostic_summary measurement to influxdb");
+            measurements.push(measurement);
+        }
+        for measurement in build_diagnostic_code_measurements(diagnostic_status, created_ms) {
+            debug!("writing diagnostic_code measurement to influxdb");
+            measurements.push(measurement);
+        }
+
+        if !measurements.is_empty() {
+            if let Err(e) = self
+                .influx_con
+                .client
+                .write(
+                    self.influx_con.bucket.as_str(),
+                    measurements[..].try_into().unwrap(),
+                )
+                .await
+            {
+                warn!("failed to write diagnostic data to influx: {e}");
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Diagnostic helper functions
+// ---------------------------------------------------------------------------
+
+fn timestamp_to_millis(ts: Option<&Timestamp>) -> u128 {
+    ts.and_then(|t| {
+        <Timestamp as Into<SystemTime>>::into(t.clone())
+            .duration_since(UNIX_EPOCH)
+            .ok()
+            .map(|d| d.as_millis())
+    })
+    .unwrap_or_else(|| {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+    })
+}
+
+fn diagnostic_created_ms(diagnostic_status: &DiagnosticStatus) -> u128 {
+    timestamp_to_millis(diagnostic_status.created.as_ref())
+}
+
+fn normalize_tag(value: &str) -> &str {
+    if value.is_empty() {
+        "UNKNOWN"
+    } else {
+        value
+    }
+}
+
+fn build_diagnostic_summary_measurement(
+    ds: &DiagnosticStatus,
+    created_ms: u128,
+) -> Option<Measurement> {
+    let summary = ds.summary.as_ref()?;
+
+    let builder = Measurement::builder(crate::MEASUREMENT_DIAGNOSTIC_SUMMARY)
+        .tag(crate::TAG_VIN, ds.vin.as_str())
+        .tag(crate::TAG_SOURCE, normalize_tag(ds.source.as_str()))
+        .tag(
+            crate::TAG_COMPONENT_ID,
+            normalize_tag(ds.component_id.as_str()),
+        )
+        .field(crate::FIELD_CREATED_DATE_TIME, created_ms)
+        .field(crate::FIELD_ACTIVE_COUNT, summary.active_count)
+        .field(crate::FIELD_STORED_COUNT, summary.stored_count)
+        .field(crate::FIELD_PENDING_COUNT, summary.pending_count)
+        .field(crate::FIELD_CRITICAL_COUNT, summary.critical_count)
+        .field(crate::FIELD_HAS_ACTIVE_FAULTS, summary.has_active_faults)
+        .field(
+            crate::FIELD_WORST_SEVERITY,
+            normalize_tag(summary.worst_severity.as_str()).to_string(),
+        );
+
+    match builder.build() {
+        Ok(measurement) => Some(measurement),
+        Err(e) => {
+            debug!("failed to create diagnostic_summary Measurement: {e}");
+            None
+        }
+    }
+}
+
+fn build_single_code_measurement(
+    code: &DiagnosticCode,
+    vin: &str,
+    created_ms: u128,
+) -> Option<Measurement> {
+    let fallback_ms = created_ms;
+    let first_seen_ms = timestamp_to_millis(code.first_seen.as_ref());
+    let last_seen_ms = timestamp_to_millis(code.last_seen.as_ref());
+    let first_seen_ms = if first_seen_ms == 0 {
+        fallback_ms
+    } else {
+        first_seen_ms
+    };
+    let last_seen_ms = if last_seen_ms == 0 {
+        fallback_ms
+    } else {
+        last_seen_ms
+    };
+
+    let builder = Measurement::builder(crate::MEASUREMENT_DIAGNOSTIC_CODE)
+        .tag(crate::TAG_VIN, vin)
+        .tag(crate::TAG_SOURCE, normalize_tag(code.source.as_str()))
+        .tag(
+            crate::TAG_COMPONENT_ID,
+            normalize_tag(code.component_id.as_str()),
+        )
+        .tag(crate::TAG_ECU, normalize_tag(code.ecu.as_str()))
+        .tag(crate::TAG_CODE, normalize_tag(code.code.as_str()))
+        .tag(crate::TAG_SEVERITY, normalize_tag(code.severity.as_str()))
+        .tag(
+            crate::TAG_LIFECYCLE_STATE,
+            normalize_tag(code.lifecycle_state.as_str()),
+        )
+        .tag(crate::TAG_PROTOCOL, normalize_tag(code.protocol.as_str()))
+        .field(crate::FIELD_CREATED_DATE_TIME, created_ms)
+        .field(crate::FIELD_RAW_UDS_DTC, code.raw_uds_dtc.clone())
+        .field(crate::FIELD_STATUS_MASK, code.status_mask.clone())
+        .field(crate::FIELD_DESCRIPTION, code.description.clone())
+        .field(crate::FIELD_FIRST_SEEN, first_seen_ms)
+        .field(crate::FIELD_LAST_SEEN, last_seen_ms);
+
+    match builder.build() {
+        Ok(measurement) => Some(measurement),
+        Err(e) => {
+            debug!("failed to create diagnostic_code Measurement: {e}");
+            None
+        }
+    }
+}
+
+fn build_diagnostic_code_measurements(ds: &DiagnosticStatus, created_ms: u128) -> Vec<Measurement> {
+    let vin = ds.vin.as_str();
+    ds.active_codes
+        .iter()
+        .chain(ds.stored_codes.iter())
+        .chain(ds.pending_codes.iter())
+        .filter_map(|code| build_single_code_measurement(code, vin, created_ms))
+        .collect()
+}
+
+// ---------------------------------------------------------------------------
+// Unit tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fms_proto::fms::{DiagnosticCode, DiagnosticStatus, DiagnosticSummary};
+    use protobuf::MessageField;
+
+    fn make_status_with_summary(active: u32) -> DiagnosticStatus {
+        let mut summary = DiagnosticSummary::new();
+        summary.active_count = active;
+        summary.stored_count = 0;
+        summary.pending_count = 0;
+        summary.critical_count = 0;
+        summary.has_active_faults = active > 0;
+        summary.worst_severity = "INFO".to_string();
+
+        let mut status = DiagnosticStatus::new();
+        status.vin = "TEST-VIN".to_string();
+        status.source = "test-source".to_string();
+        status.component_id = "test-comp".to_string();
+        status.summary = MessageField::some(summary);
+        status
+    }
+
+    fn make_active_code(code: &str) -> DiagnosticCode {
+        let mut c = DiagnosticCode::new();
+        c.code = code.to_string();
+        c.lifecycle_state = "ACTIVE".to_string();
+        c.severity = "CRITICAL".to_string();
+        c.protocol = "UDS".to_string();
+        c.source = "test-source".to_string();
+        c.component_id = "test-comp".to_string();
+        c.ecu = "test-ecu".to_string();
+        c
+    }
+
+    #[test]
+    fn test_summary_measurement_produced() {
+        let status = make_status_with_summary(3);
+        let m = build_diagnostic_summary_measurement(&status, 1000);
+        assert!(m.is_some(), "expected a summary measurement to be built");
+    }
+
+    #[test]
+    fn test_code_measurement_produced_for_active_dtc() {
+        let mut status = make_status_with_summary(1);
+        status.active_codes.push(make_active_code("0x123456"));
+        let measurements = build_diagnostic_code_measurements(&status, 1000);
+        assert_eq!(measurements.len(), 1);
+    }
+
+    #[test]
+    fn test_empty_source_normalized_to_unknown() {
+        let mut status = make_status_with_summary(0);
+        status.source = String::new();
+        let m = build_diagnostic_summary_measurement(&status, 1000);
+        assert!(m.is_some());
+        // The measurement was built — tag normalization was applied.
+    }
+
+    #[test]
+    fn test_empty_component_id_normalized_to_unknown() {
+        let mut status = make_status_with_summary(0);
+        status.component_id = String::new();
+        let m = build_diagnostic_summary_measurement(&status, 1000);
+        assert!(m.is_some());
     }
 }

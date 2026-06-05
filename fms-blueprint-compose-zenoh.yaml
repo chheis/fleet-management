@@ -49,6 +49,22 @@ services:
     volumes:
       - ./config/zenoh/config-client.json5:/zenoh-config.json5
 
+  fms-diagnostics-forwarder:
+    command: "zenoh -c /zenoh-config.json5"
+    depends_on:
+      fms-zenoh-router:
+        condition: service_started
+    volumes:
+      - ./config/zenoh/config-client.json5:/zenoh-config.json5
+
+  fms-diagnostics-consumer:
+    command: "zenoh -c /zenoh-config.json5"
+    depends_on:
+      fms-zenoh-router:
+        condition: service_started
+    volumes:
+      - ./config/zenoh/config-client.json5:/zenoh-config.json5
+
   fleet-analysis-backend:
     build:
       context: "../../devices/backend-fleet-analysis-java"

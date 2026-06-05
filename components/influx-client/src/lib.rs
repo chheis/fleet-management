@@ -57,9 +57,30 @@ pub const FIELD_WHEEL_BASED_SPEED: &str = "wheelBasedSpeed";
 
 pub const MEASUREMENT_HEADER: &str = "header";
 pub const MEASUREMENT_SNAPSHOT: &str = "snapshot";
+pub const MEASUREMENT_DIAGNOSTIC_SUMMARY: &str = "diagnostic_summary";
+pub const MEASUREMENT_DIAGNOSTIC_CODE: &str = "diagnostic_code";
 
 pub const TAG_TRIGGER: &str = "trigger";
 pub const TAG_VIN: &str = "vin";
+pub const TAG_SOURCE: &str = "source";
+pub const TAG_COMPONENT_ID: &str = "componentId";
+pub const TAG_ECU: &str = "ecu";
+pub const TAG_CODE: &str = "code";
+pub const TAG_SEVERITY: &str = "severity";
+pub const TAG_LIFECYCLE_STATE: &str = "lifecycleState";
+pub const TAG_PROTOCOL: &str = "protocol";
+
+pub const FIELD_ACTIVE_COUNT: &str = "activeCount";
+pub const FIELD_STORED_COUNT: &str = "storedCount";
+pub const FIELD_PENDING_COUNT: &str = "pendingCount";
+pub const FIELD_CRITICAL_COUNT: &str = "criticalCount";
+pub const FIELD_HAS_ACTIVE_FAULTS: &str = "hasActiveFaults";
+pub const FIELD_WORST_SEVERITY: &str = "worstSeverity";
+pub const FIELD_RAW_UDS_DTC: &str = "rawUdsDtc";
+pub const FIELD_STATUS_MASK: &str = "statusMask";
+pub const FIELD_DESCRIPTION: &str = "description";
+pub const FIELD_FIRST_SEEN: &str = "firstSeen";
+pub const FIELD_LAST_SEEN: &str = "lastSeen";
 
 pub mod connection;
 #[cfg(feature = "writer")]
