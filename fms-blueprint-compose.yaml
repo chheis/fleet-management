@@ -32,6 +32,8 @@ configs:
     file: "./grafana/provisioning/dashboards/dashboards_from_filesystem.yaml"
   grafana_fms_dashboard.json:
     file: "./grafana/dashboards/FMS-Fleet.json"
+  grafana_fms_diagnostics_dashboard.json:
+    file: "./grafana/dashboards/FMS-Diagnostics.json"
   vss_overlay.json:
     file: "./spec/overlay/vss.json"
 
@@ -99,6 +101,9 @@ services:
         target: "/etc/grafana/provisioning/dashboards/grafana_dashboards_from_fs.yaml"
       - source: "grafana_fms_dashboard.json"
         target: "/etc/dashboards/grafana_fms_dashboard.json"
+        mode: 0644
+      - source: "grafana_fms_diagnostics_dashboard.json"
+        target: "/etc/dashboards/grafana_fms_diagnostics_dashboard.json"
         mode: 0644
     volumes:
       - type: "volume"
@@ -212,3 +217,63 @@ services:
       RUST_LOG: "${FMS_FORWARDER_LOG_CONFIG:-info,fms_forwarder=info}"
       TRUST_STORE_PATH: "${FMS_FORWARDER_TRUST_STORE_PATH:-/etc/ssl/certs/ca-certificates.crt}"
 
+  diagnostic-source-simulator:
+    image: "ghcr.io/eclipse-sdv-blueprints/fleet-management/diagnostic-source-simulator:main"
+    build:
+      context: "./components"
+      dockerfile: "Dockerfile.diagnostic-source-simulator"
+    container_name: "diagnostic-source-simulator"
+    cap_drop: *default-drops
+    networks:
+      - "fms-vehicle"
+    depends_on:
+      databroker:
+        condition: service_started
+    environment:
+      KUKSA_DATABROKER_URI: "http://databroker:55556"
+      RUST_LOG: "${DIAG_SIMULATOR_LOG_CONFIG:-info}"
+
+  fms-diagnostics-forwarder:
+    image: "ghcr.io/eclipse-sdv-blueprints/fleet-management/fms-diagnostics-forwarder:main"
+    build:
+      context: "./components"
+      dockerfile: "Dockerfile.fms-diagnostics-forwarder"
+    container_name: "fms-diagnostics-forwarder"
+    cap_drop: *default-drops
+    networks:
+      - "fms-backend"
+      - "fms-vehicle"
+    depends_on:
+      databroker:
+        condition: service_started
+      diagnostic-source-simulator:
+        condition: service_started
+    environment:
+      KUKSA_DATABROKER_URI: "http://databroker:55556"
+      DIAGNOSTIC_TOPIC: "up://fms-diagnostics-forwarder/D110/1/D110"
+      FMS_DIAGNOSTICS_FORWARDER_TIMER_INTERVAL: "${FMS_DIAGNOSTICS_FORWARDER_TIMER_INTERVAL:-2s}"
+      RUST_LOG: "${FMS_DIAGNOSTICS_FORWARDER_LOG_CONFIG:-info}"
+
+  fms-diagnostics-consumer:
+    image: "ghcr.io/eclipse-sdv-blueprints/fleet-management/fms-diagnostics-consumer:main"
+    build:
+      context: "./components"
+      dockerfile: "Dockerfile.fms-diagnostics-consumer"
+    container_name: "fms-diagnostics-consumer"
+    cap_drop: *default-drops
+    networks:
+      - "fms-backend"
+    depends_on:
+      influxdb:
+        condition: service_healthy
+    env_file:
+      - "./influxdb/fms-demo.env"
+    environment:
+      INFLUXDB_TOKEN_FILE: "/tmp/fms-demo.token"
+      DIAGNOSTIC_TOPIC_FILTER: "up://*/D110/1/D110"
+      RUST_LOG: "${FMS_DIAGNOSTICS_CONSUMER_LOG_CONFIG:-info}"
+    volumes:
+      - type: "volume"
+        source: "influxdb-auth"
+        target: "/tmp"
+        read_only: true

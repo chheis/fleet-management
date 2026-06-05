@@ -114,6 +114,12 @@ setup manually.
 
 Additional information can be found in the components' corresponding subfolders.
 
+## Diagnostics Forwarding
+
+A parallel diagnostics pipeline is available alongside the existing rFMS/VehicleStatus flow.
+See [docs/diagnostics-forwarding.md](docs/diagnostics-forwarding.md) for the full architecture,
+data path, VSS paths, REST API endpoints, and Grafana dashboard usage.
+
 # Contributing
 
 We are looking forward to your ideas and PRs. Each PRs triggers a GitHub action which checks the formating, performs

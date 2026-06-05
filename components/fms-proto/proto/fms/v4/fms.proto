@@ -288,6 +288,42 @@ message UptimeData {
   optional uint64 bellow_pressure_rear_axle_right = 13;
 }
 
+message DiagnosticSummary {
+  uint32 active_count = 1;
+  uint32 stored_count = 2;
+  uint32 pending_count = 3;
+  uint32 critical_count = 4;
+  bool   has_active_faults = 5;
+  string worst_severity = 6;
+}
+
+message DiagnosticCode {
+  string code = 1;
+  string raw_uds_dtc = 2;
+  string protocol = 3;          // UDS | SOVD | OBD | INTERNAL
+  string status_mask = 4;
+  string description = 5;
+  string severity = 6;          // INFO | WARNING | CRITICAL | UNKNOWN
+  string lifecycle_state = 7;   // ACTIVE | STORED | PENDING | CLEARED | UNKNOWN
+  string ecu = 8;
+  string component_id = 9;
+  string source = 10;
+  google.protobuf.Timestamp first_seen = 11;
+  google.protobuf.Timestamp last_seen = 12;
+}
+
+message DiagnosticStatus {
+  string vin = 1;
+  string vehicle_id = 2;
+  string source = 3;
+  string component_id = 4;
+  google.protobuf.Timestamp created = 5;
+  repeated DiagnosticCode active_codes = 6;
+  repeated DiagnosticCode stored_codes = 7;
+  repeated DiagnosticCode pending_codes = 8;
+  DiagnosticSummary summary = 9;
+}
+
 message VehicleStatus {
   string vin = 1;
   Trigger trigger = 2;

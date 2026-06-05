@@ -538,3 +538,100 @@ Vehicle.TraveledDistanceHighRes:
 Vehicle.VehicleIdentification.VIN:
   datatype: string
   type: attribute
+
+# Diagnostic signals added for the diagnostics forwarding pipeline
+Vehicle.Diagnostics:
+  type: branch
+  description: Diagnostic data for the vehicle, including DTCs (Diagnostic Trouble Codes).
+
+Vehicle.Diagnostics.ActiveDTCCount:
+  datatype: uint16
+  type: sensor
+  description: Number of currently active Diagnostic Trouble Codes.
+
+Vehicle.Diagnostics.StoredDTCCount:
+  datatype: uint16
+  type: sensor
+  description: Number of stored Diagnostic Trouble Codes.
+
+Vehicle.Diagnostics.PendingDTCCount:
+  datatype: uint16
+  type: sensor
+  description: Number of pending Diagnostic Trouble Codes.
+
+Vehicle.Diagnostics.CriticalDTCCount:
+  datatype: uint16
+  type: sensor
+  description: Number of critical-severity Diagnostic Trouble Codes.
+
+Vehicle.Diagnostics.WorstSeverity:
+  datatype: string
+  type: sensor
+  allowed: [INFO, WARNING, CRITICAL, UNKNOWN]
+  description: Worst severity level among all active DTCs.
+
+Vehicle.Diagnostics.LastUpdate:
+  datatype: string
+  type: sensor
+  description: ISO 8601 timestamp of the last diagnostic update.
+
+Vehicle.Diagnostics.Source:
+  datatype: string
+  type: sensor
+  description: Name of the diagnostic source system.
+
+Vehicle.Diagnostics.ComponentId:
+  datatype: string
+  type: sensor
+  description: Identifier of the component that generated the diagnostic data.
+
+Vehicle.Diagnostics.Ecu:
+  datatype: string
+  type: sensor
+  description: ECU identifier associated with the last DTC.
+
+Vehicle.Diagnostics.LastCode:
+  datatype: string
+  type: sensor
+  description: Most recently observed Diagnostic Trouble Code.
+
+Vehicle.Diagnostics.LastDescription:
+  datatype: string
+  type: sensor
+  description: Human-readable description of the most recently observed DTC.
+
+Vehicle.Diagnostics.LastStatusMask:
+  datatype: string
+  type: sensor
+  description: UDS status mask of the most recently observed DTC.
+
+Vehicle.Diagnostics.LastLifecycleState:
+  datatype: string
+  type: sensor
+  allowed: [ACTIVE, STORED, PENDING, CLEARED, UNKNOWN]
+  description: Lifecycle state of the most recently observed DTC.
+
+Vehicle.Diagnostics.LastSeverity:
+  datatype: string
+  type: sensor
+  allowed: [INFO, WARNING, CRITICAL, UNKNOWN]
+  description: Severity of the most recently observed DTC.
+
+Vehicle.Diagnostics.E2EV:
+  type: branch
+  description: End-to-End Validation (E2EV) signals.
+
+Vehicle.Diagnostics.E2EV.CrcOk:
+  datatype: boolean
+  type: sensor
+  description: Indicates whether the last E2EV CRC check passed.
+
+Vehicle.Diagnostics.E2EV.AliveCounter:
+  datatype: uint16
+  type: sensor
+  description: Monotonically incrementing counter used for E2EV liveness detection.
+
+Vehicle.Diagnostics.E2EV.LastFault:
+  datatype: string
+  type: sensor
+  description: Description of the last E2EV fault detected.

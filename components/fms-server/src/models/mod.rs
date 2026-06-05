@@ -19,6 +19,7 @@
 
 use crate::models;
 
+pub mod diagnostics;
 pub mod position;
 pub mod status;
 pub mod vehicle;

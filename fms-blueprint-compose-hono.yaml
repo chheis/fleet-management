@@ -39,3 +39,7 @@ services:
       - type: "bind"
         source: "${FMS_FORWARDER_CONFIG_FOLDER}"
         target: "/app/config"
+
+# TODO: fms-diagnostics-forwarder and fms-diagnostics-consumer do not yet support Hono transport.
+# The diagnostics pipeline is currently Zenoh-only. Hono support is a follow-up task.
+# See docs/diagnostics-forwarding.md "Known Limitations" for details.
