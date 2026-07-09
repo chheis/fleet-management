@@ -21,8 +21,10 @@ RUN mvn -q -DskipTests package
 FROM eclipse-temurin:21-jre
 
 ARG PAYARA_MICRO_VERSION=6.2024.2
+ARG PAYARA_MICRO_SHA256=60c8a76b72439d552662c2663c0666307725fee6661769c731f101d021e5e12c
 WORKDIR /opt/payara
 ADD https://repo1.maven.org/maven2/fish/payara/extras/payara-micro/${PAYARA_MICRO_VERSION}/payara-micro-${PAYARA_MICRO_VERSION}.jar /opt/payara/payara-micro.jar
+RUN echo "${PAYARA_MICRO_SHA256} /opt/payara/payara-micro.jar" | sha256sum -c - || (echo "Checksum verification failed"; exit 1)
 
 COPY --from=build /workspace/target/*.war /opt/payara/fleet-analysis-backend.war
 
